@@ -1,0 +1,21 @@
+<html>
+	<head>
+		<link rel="stylesheet" href="style.css">
+		<script type="text/javascript" src="color.js"></script>
+		<script type="text/javascript" src="point.js"></script>
+		<script type="text/javascript" src="vector.js"></script>
+		<script type="text/javascript" src="triangle.js"></script>
+		<script type="text/javascript" src="camera.js"></script>
+		<script type="text/javascript" src="lightsource.js"></script>
+		<script type="text/javascript" src="image.js"></script>
+		<script type="text/javascript" src="engine.js"></script>
+	</head>
+	<body>
+		<div id="image"></div>
+		
+		<script>
+			let engine = new Engine();
+			document.getElementById('image').innerHTML = engine.image.text;
+		</script>
+	</body>
+</html>
