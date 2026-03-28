@@ -4,18 +4,136 @@
 		<script type="text/javascript" src="color.js"></script>
 		<script type="text/javascript" src="point.js"></script>
 		<script type="text/javascript" src="vector.js"></script>
+		<script type="text/javascript" src="matrix4.js"></script>
 		<script type="text/javascript" src="triangle.js"></script>
 		<script type="text/javascript" src="camera.js"></script>
 		<script type="text/javascript" src="lightsource.js"></script>
 		<script type="text/javascript" src="image.js"></script>
+		<script type="text/javascript" src="cube.js"></script>
+		<script type="text/javascript" src="scene.js"></script>
 		<script type="text/javascript" src="engine.js"></script>
 	</head>
 	<body>
-		<div id="image"></div>
+		<div class="app">
+			<div style="font-size:24px; font-weight:bold; margin-bottom:18px">Rayon - CPU Ray Tracer in JavaScript</div>
+			<div class="canvas-container">
+				<canvas id="canvas"></canvas>
+			</div>
+        
+
+			<div id="controls" class="controls">
+			<p>
+				<label>Diffuse: <span id="diffVal">0.5</span></label>
+				<input id="diffRange" type="range" min="0" max="1" step="0.01" value="0.5">
+			</p>
+			<p>
+				<label>Specular: <span id="specVal">0</span></label>
+				<input id="specRange" type="range" min="0" max="1" step="0.01" value="0">
+			</p>
+			<p>
+				<label>Shininess: <span id="shinVal">32</span></label>
+				<input id="shinRange" type="range" min="1" max="256" step="1" value="32">
+			</p>
+			<p>
+				<label>Ambient: <span id="ambVal">0.2</span></label>
+				<input id="ambRange" type="range" min="0" max="1" step="0.01" value="0.2">
+			</p>
+			</div>
+			<div class="fps-box">FPS: <span id="fps">--</span></div>
+
+			<div style="margin-top:18px">
+			<button onclick="engine.traceAll(); engine.image.drawToCanvas(document.getElementById('canvas'), engine.canvasScale);">Trace All</button>
+			<button onclick="startAnim();">Start Animation</button>
+			<button onclick="stopAnim();">Stop Animation</button>
+			</div>
+
+			<script>
+				console.log("Starting application...");
+				let engine = new Engine();
+				const canvas = document.getElementById('canvas');
+				// Start with a full trace and draw to canvas
+				engine.traceAll();
+				engine.image.drawToCanvas(canvas, engine.canvasScale);
 		
-		<script>
-			let engine = new Engine();
-			document.getElementById('image').innerHTML = engine.image.text;
-		</script>
+				// Camera rotation state for middle-button dragging
+				let isMiddleDown = false;
+				let lastX = 0, lastY = 0;
+				let camAx = 0, camAy = 0, camAz = 0;
+
+				// Middle-button press starts rotation
+				canvas.addEventListener('mousedown', (e) => {
+					if (e.button === 1) {
+						isMiddleDown = true; lastX = e.clientX; lastY = e.clientY;
+						e.preventDefault();
+					}
+				});
+				window.addEventListener('mouseup', (e) => {
+					if (isMiddleDown && e.button === 1) {
+						isMiddleDown = false;
+					}
+				});
+				window.addEventListener('mousemove', (e) => {
+					if (!isMiddleDown) return;
+					const dx = e.clientX - lastX;
+					const dy = e.clientY - lastY;
+					lastX = e.clientX; lastY = e.clientY;
+					const sensitivity = 0.005; // radians per pixel
+					camAy += dx * sensitivity; // yaw
+					camAx += dy * sensitivity; // pitch
+					engine.setCameraRotation(camAx, camAy, camAz);
+					engine.traceAll();
+					engine.image.drawToCanvas(canvas, engine.canvasScale);
+				});
+
+
+				function startAnim() { engine.startAnimation(canvas); }
+				function stopAnim() { engine.stopAnimation(); }
+
+				// Wire up control sliders to engine parameters
+				const diffRange = document.getElementById('diffRange');
+				const specRange = document.getElementById('specRange');
+				const shinRange = document.getElementById('shinRange');
+				const ambRange = document.getElementById('ambRange');
+				const diffVal = document.getElementById('diffVal');
+				const specVal = document.getElementById('specVal');
+				const shinVal = document.getElementById('shinVal');
+				const ambVal = document.getElementById('ambVal');
+
+				// Initialize UI from engine values
+				diffRange.value = engine.triangles.length ? engine.triangles[0].diffuseReflectance : 0.5;
+				diffVal.textContent = diffRange.value;
+				specRange.value = engine.triangles.length ? engine.triangles[0].specularReflectance : 0;
+				specVal.textContent = specRange.value;
+				shinRange.value = engine.scene.shininess;
+				shinVal.textContent = shinRange.value;
+				ambRange.value = engine.scene.ambientStrength;
+				ambVal.textContent = ambRange.value;
+
+				diffRange.oninput = () => {
+					const v = parseFloat(diffRange.value);
+					diffVal.textContent = v.toFixed(2);
+					engine.setSceneDiffuse(v);
+					engine.traceAll(); engine.image.drawToCanvas(canvas, engine.canvasScale);
+				};
+				specRange.oninput = () => {
+					const v = parseFloat(specRange.value);
+					specVal.textContent = v.toFixed(2);
+					engine.setSceneSpecular(v);
+					engine.traceAll(); engine.image.drawToCanvas(canvas, engine.canvasScale);
+				};
+				shinRange.oninput = () => {
+					const v = parseInt(shinRange.value, 10);
+					shinVal.textContent = v;
+					if (engine.scene) engine.scene.shininess = v;
+					engine.traceAll(); engine.image.drawToCanvas(canvas, engine.canvasScale);
+				};
+				ambRange.oninput = () => {
+					const v = parseFloat(ambRange.value);
+					ambVal.textContent = v.toFixed(2);
+					if (engine.scene) engine.scene.ambientStrength = v;
+					engine.traceAll(); engine.image.drawToCanvas(canvas, engine.canvasScale);
+				};
+			</script>
+		</div>
 	</body>
 </html>

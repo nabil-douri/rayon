@@ -35,7 +35,24 @@ class Vector {
 			this.x * v.y - this.y * v.x);
 	}
 	
-	norm() {
+	norm2() {
 		return (this.x * this.x + this.y * this.y + this.z * this.z);
+	}
+
+	// Length (magnitude) of the vector
+	length() {
+		return Math.sqrt(this.norm2());
+	}
+
+	// Return a new vector scaled by scalar s
+	scale(s) {
+		return new Vector(this.x * s, this.y * s, this.z * s);
+	}
+
+	// Return a normalized copy of this vector (unit length). If zero, returns zero vector.
+	normalize() {
+		const len = this.length();
+		if (len === 0) return new Vector(0,0,0);
+		return this.scale(1.0 / len);
 	}
 }

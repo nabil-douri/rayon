@@ -1,0 +1,105 @@
+
+:root {
+  --bg: #1f1f23;
+  --panel: rgba(255, 255, 255, 0.06);
+  --muted: #cfcfd3;
+  --accent: #6fb3ff;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: Inter, "Segoe UI", system-ui, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.app {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.canvas-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+canvas#canvas {
+  background: #000;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  image-rendering: pixelated;
+}
+
+.controls {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  background: var(--panel);
+  padding: 10px;
+  border-radius: 8px;
+}
+
+
+.controls p {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center; /* center the row content */
+  gap: 12px;
+  margin: 0;
+}
+
+.controls label {
+  width: 180px; /* fixed label width for alignment */
+  text-align: right;
+  font-size: 14px; /* match input sizing */
+  color: var(--muted);
+}
+
+.controls input[type=range] {
+  width: 220px;
+  height: 20px;
+  vertical-align: middle;
+}
+
+.btn-row {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid rgba(111, 179, 255, 0.16);
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: rgba(111, 179, 255, 0.04);
+}
+
+.fps-box {
+  margin-top: 8px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+@media (min-width: 900px) {
+  .controls {
+    max-width: 900px;
+  }
+}

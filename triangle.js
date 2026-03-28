@@ -5,6 +5,8 @@ class Triangle {
 	v0;
 	v1;
 	v2;
+	edge1;
+	edge2;
 	normal;
 	color;
 	diffuseReflectance;
@@ -17,9 +19,9 @@ class Triangle {
 		this.v2 = v2;
 		
 		// Compute normal vector
-		A = v1.minus(v0);
-		B = v2.minus(v0);
-		this.normal = A.cross(B);
+		this.edge1 = v1.minus(v0);
+		this.edge2 = v2.minus(v0);
+		this.normal = this.edge1.cross(this.edge2).normalize();
 		
 		this.color = color;
 		this.diffuseReflectance = diffuseReflectance;
