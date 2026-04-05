@@ -5,9 +5,9 @@ class Engine {
 	triangles = [];
 	cubes = [];
 	canvasScale = 1;
-	oversampling = 1;
-	definitionH = 720;
-	definitionV = 480;
+	oversampling = Config.camera.oversampling;
+	definitionH = Config.camera.width;
+	definitionV = Config.camera.height;
     
 	constructor() {
 		console.log("Initializing engine...");
@@ -17,9 +17,7 @@ class Engine {
     
 	load() {
 		console.log("Loading scene...");
-		this.camera = new Camera(new Point(0,0,0), this.definitionH*this.oversampling, this.definitionV*this.oversampling, 1/this.oversampling, 1000/this.oversampling);
-		// Precompute ray vectors on the camera so the image and camera stay aligned
-		this.camera.rayVectors = this.camera.computeRayVectors();
+		this.camera = new Camera(new Point(0,0,0), this.definitionH*this.oversampling, this.definitionV*this.oversampling, 1/this.oversampling, Config.camera.focalLength/this.oversampling);
 		console.log(this.camera);
 		// Build scene (lights, cubes, triangles, and scene-level parameters)
 		this.scene = new Scene();
@@ -31,96 +29,111 @@ class Engine {
 		console.log(this.image);
 		this._black = new Color(0,0,0);
 		this.canvasScale = 1/this.oversampling;
+		// Reusable rotation buffer (avoids allocation in traceAllParallel)
+		this._rot9Buf = new Float32Array(9);
+		// Pre-allocate SOA buffers once — reused every frame, no per-frame GC
+		const maxT = Config.webgl.maxTriangles;
+		const maxL = Config.webgl.maxLights;
+		this._tri_sx      = new Float32Array(maxT);
+		this._tri_sy      = new Float32Array(maxT);
+		this._tri_sz      = new Float32Array(maxT);
+		this._tri_e1x     = new Float32Array(maxT);
+		this._tri_e1y     = new Float32Array(maxT);
+		this._tri_e1z     = new Float32Array(maxT);
+		this._tri_e2x     = new Float32Array(maxT);
+		this._tri_e2y     = new Float32Array(maxT);
+		this._tri_e2z     = new Float32Array(maxT);
+		this._tri_nx      = new Float32Array(maxT);
+		this._tri_ny      = new Float32Array(maxT);
+		this._tri_nz      = new Float32Array(maxT);
+		this._tri_cr      = new Float32Array(maxT);
+		this._tri_cg      = new Float32Array(maxT);
+		this._tri_cb      = new Float32Array(maxT);
+		this._tri_diffuse   = new Float32Array(maxT);
+		this._tri_specular  = new Float32Array(maxT);
+		this._lights_x      = new Float32Array(maxL);
+		this._lights_y      = new Float32Array(maxL);
+		this._lights_z      = new Float32Array(maxL);
+		this._lights_power  = new Float32Array(maxL);
+		this._lights_r      = new Float32Array(maxL);
+		this._lights_g      = new Float32Array(maxL);
+		this._lights_b      = new Float32Array(maxL);
+		// Compact interleaved GPU buffer: 5 vec4 per triangle (20 floats)
+		// vec4 0: s.xyz,   0        (origin-v0)
+		// vec4 1: e1.xyz,  0
+		// vec4 2: e2.xyz,  0
+		// vec4 3: n.xyz,   0
+		// vec4 4: rgb.xyz, diffuse  + specular in .a actually split: rgb+diff then spec
+		// Actually packing as 5 RGBA: col0=s, col1=e1, col2=e2, col3=normal, col4=color+diff+spec
+		// We keep spec in col4.a for tight packing (5 texels per tri instead of 6)
+		this._gpuTriBuf   = new Float32Array(maxT * 5 * 4);
+		this._gpuLightBuf = new Float32Array(maxL * 2 * 4);
+		// Parallel CPU tracer — persistent worker pool
+		const nw = Config.parallel.numWorkers || navigator.hardwareConcurrency || 4;
+		this._parallelTracer = (typeof ParallelTracer !== 'undefined')
+			? new ParallelTracer('worker-raytracer.js', nw, Config.parallel.chunkSize)
+			: null;
 	}
 
-	// Prepare numeric, camera-space triangle and light buffers for the frame.
+	// Prepare numeric world-space triangle and light buffers for the frame.
+	// Also fills _gpuTriBuf / _gpuLightBuf (compact interleaved) for the WebGL renderer.
+	//
+	// GPU texture layout — 5 RGBA32F texels per triangle (row = tri index, col = field):
+	//   col 0 : s.xyz  (camOrigin - v0),  w = 0
+	//   col 1 : e1.xyz,                   w = 0
+	//   col 2 : e2.xyz,                   w = 0
+	//   col 3 : n.xyz,                    w = specularReflectance
+	//   col 4 : color.rgb,                w = diffuseReflectance
+	// Replace the loaded mesh triangles while keeping cube triangles intact.
+	// Call renderFrame() after this to update the view.
+	setMeshTriangles(tris) {
+		this._meshTriangles = tris;
+		this.triangles = [...this.cubes.flatMap(c => c.triangles), ...tris];
+		const total = this.triangles.length;
+		const maxT  = Config.webgl.maxTriangles;
+		if (total > maxT)
+			console.warn(`Mesh has ${total} triangles but Config.webgl.maxTriangles is ${maxT}. ` +
+				`Only the first ${maxT} will be rendered. Increase maxTriangles in config.js.`);
+	}
+
 	prepareFrameData() {
 		const cam = this.camera.position;
 		const ox = cam.x, oy = cam.y, oz = cam.z;
-		// Triangles: pack into separate Float32Array attributes (structure-of-arrays)
-		const tcount = this.triangles.length;
+		const maxT   = Config.webgl.maxTriangles;
+		const tcount = Math.min(this.triangles.length, maxT);
 		this._triCount = tcount;
-		this._tri_sx = new Float32Array(tcount);
-		this._tri_sy = new Float32Array(tcount);
-		this._tri_sz = new Float32Array(tcount);
-		this._tri_e1x = new Float32Array(tcount);
-		this._tri_e1y = new Float32Array(tcount);
-		this._tri_e1z = new Float32Array(tcount);
-		this._tri_e2x = new Float32Array(tcount);
-		this._tri_e2y = new Float32Array(tcount);
-		this._tri_e2z = new Float32Array(tcount);
-		this._tri_nx = new Float32Array(tcount);
-		this._tri_ny = new Float32Array(tcount);
-		this._tri_nz = new Float32Array(tcount);
-		this._tri_cr = new Float32Array(tcount);
-		this._tri_cg = new Float32Array(tcount);
-		this._tri_cb = new Float32Array(tcount);
-		this._tri_diffuse = new Float32Array(tcount);
-		this._tri_specular = new Float32Array(tcount);
 
-		const hasRot = this.camera && this.camera.rotationMatrix && this.camera.rotationMatrix.m;
-		const rotm = hasRot ? this.camera.rotationMatrix.m : null;
+		const gpuT = this._gpuTriBuf;
 		for (let i = 0; i < tcount; i++) {
-			const t = this.triangles[i];
-			const v0x = t.v0.x - ox;
-			const v0y = t.v0.y - oy;
-			const v0z = t.v0.z - oz;
-			if (hasRot) {
-				const vx = rotm[0]*v0x + rotm[4]*v0y + rotm[8]*v0z;
-				const vy = rotm[1]*v0x + rotm[5]*v0y + rotm[9]*v0z;
-				const vz = rotm[2]*v0x + rotm[6]*v0y + rotm[10]*v0z;
-				this._tri_sx[i] = -vx;
-				this._tri_sy[i] = -vy;
-				this._tri_sz[i] = -vz;
-				const e1x = t.edge1.x, e1y = t.edge1.y, e1z = t.edge1.z;
-				const e2x = t.edge2.x, e2y = t.edge2.y, e2z = t.edge2.z;
-				this._tri_e1x[i] = rotm[0]*e1x + rotm[4]*e1y + rotm[8]*e1z;
-				this._tri_e1y[i] = rotm[1]*e1x + rotm[5]*e1y + rotm[9]*e1z;
-				this._tri_e1z[i] = rotm[2]*e1x + rotm[6]*e1y + rotm[10]*e1z;
-				this._tri_e2x[i] = rotm[0]*e2x + rotm[4]*e2y + rotm[8]*e2z;
-				this._tri_e2y[i] = rotm[1]*e2x + rotm[5]*e2y + rotm[9]*e2z;
-				this._tri_e2z[i] = rotm[2]*e2x + rotm[6]*e2y + rotm[10]*e2z;
-				const nx = t.normal.x, ny = t.normal.y, nz = t.normal.z;
-				this._tri_nx[i] = rotm[0]*nx + rotm[4]*ny + rotm[8]*nz;
-				this._tri_ny[i] = rotm[1]*nx + rotm[5]*ny + rotm[9]*nz;
-				this._tri_nz[i] = rotm[2]*nx + rotm[6]*ny + rotm[10]*nz;
-			} else {
-				this._tri_sx[i] = -v0x;
-				this._tri_sy[i] = -v0y;
-				this._tri_sz[i] = -v0z;
-				this._tri_e1x[i] = t.edge1.x; this._tri_e1y[i] = t.edge1.y; this._tri_e1z[i] = t.edge1.z;
-				this._tri_e2x[i] = t.edge2.x; this._tri_e2y[i] = t.edge2.y; this._tri_e2z[i] = t.edge2.z;
-				this._tri_nx[i] = t.normal.x; this._tri_ny[i] = t.normal.y; this._tri_nz[i] = t.normal.z;
-			}
-			this._tri_cr[i] = t.color.r; this._tri_cg[i] = t.color.g; this._tri_cb[i] = t.color.b;
-			this._tri_diffuse[i] = t.diffuseReflectance; this._tri_specular[i] = t.specularReflectance;
+			const t   = this.triangles[i];
+			const sx  = t.v0.x - ox, sy = t.v0.y - oy, sz = t.v0.z - oz;
+			this._tri_sx[i] = -sx; this._tri_sy[i] = -sy; this._tri_sz[i] = -sz;
+			this._tri_e1x[i] = t.edge1.x; this._tri_e1y[i] = t.edge1.y; this._tri_e1z[i] = t.edge1.z;
+			this._tri_e2x[i] = t.edge2.x; this._tri_e2y[i] = t.edge2.y; this._tri_e2z[i] = t.edge2.z;
+			this._tri_nx[i]  = t.normal.x; this._tri_ny[i]  = t.normal.y; this._tri_nz[i]  = t.normal.z;
+			this._tri_cr[i]  = t.color.r;  this._tri_cg[i]  = t.color.g;  this._tri_cb[i]  = t.color.b;
+			this._tri_diffuse[i]  = t.diffuseReflectance;
+			this._tri_specular[i] = t.specularReflectance;
+			// Pack into compact GPU buffer (5 vec4 per triangle)
+			const b = i * 20;
+			gpuT[b+ 0] = -sx;          gpuT[b+ 1] = -sy;         gpuT[b+ 2] = -sz;         gpuT[b+ 3] = 0;
+			gpuT[b+ 4] = t.edge1.x;    gpuT[b+ 5] = t.edge1.y;   gpuT[b+ 6] = t.edge1.z;   gpuT[b+ 7] = 0;
+			gpuT[b+ 8] = t.edge2.x;    gpuT[b+ 9] = t.edge2.y;   gpuT[b+10] = t.edge2.z;   gpuT[b+11] = 0;
+			gpuT[b+12] = t.normal.x;   gpuT[b+13] = t.normal.y;  gpuT[b+14] = t.normal.z;  gpuT[b+15] = t.specularReflectance;
+			gpuT[b+16] = t.color.r;    gpuT[b+17] = t.color.g;   gpuT[b+18] = t.color.b;   gpuT[b+19] = t.diffuseReflectance;
 		}
 
-		// Lights: pack into separate Float32Array attributes (structure-of-arrays)
 		const lcount = this.lightSources.length;
-		this._lights_x = new Float32Array(lcount);
-		this._lights_y = new Float32Array(lcount);
-		this._lights_z = new Float32Array(lcount);
-		this._lights_power = new Float32Array(lcount);
-		this._lights_r = new Float32Array(lcount);
-		this._lights_g = new Float32Array(lcount);
-		this._lights_b = new Float32Array(lcount);
+		const gpuL = this._gpuLightBuf;
 		for (let i = 0; i < lcount; i++) {
 			const L = this.lightSources[i];
 			const lx = L.position.x - ox, ly = L.position.y - oy, lz = L.position.z - oz;
-			if (hasRot) {
-				this._lights_x[i] = rotm[0]*lx + rotm[4]*ly + rotm[8]*lz;
-				this._lights_y[i] = rotm[1]*lx + rotm[5]*ly + rotm[9]*lz;
-				this._lights_z[i] = rotm[2]*lx + rotm[6]*ly + rotm[10]*lz;
-			} else {
-				this._lights_x[i] = lx;
-				this._lights_y[i] = ly;
-				this._lights_z[i] = lz;
-			}
+			this._lights_x[i] = lx; this._lights_y[i] = ly; this._lights_z[i] = lz;
 			this._lights_power[i] = L.power;
-			this._lights_r[i] = L.color.r;
-			this._lights_g[i] = L.color.g;
-			this._lights_b[i] = L.color.b;
+			this._lights_r[i] = L.color.r; this._lights_g[i] = L.color.g; this._lights_b[i] = L.color.b;
+			const b = i * 8;
+			gpuL[b+0] = lx;        gpuL[b+1] = ly;        gpuL[b+2] = lz;        gpuL[b+3] = L.power;
+			gpuL[b+4] = L.color.r; gpuL[b+5] = L.color.g; gpuL[b+6] = L.color.b; gpuL[b+7] = 0;
 		}
 	}
 
@@ -130,8 +143,63 @@ class Engine {
 	setCameraRotation(ax, ay, az) {
 		if (typeof Matrix4 !== 'undefined') {
 			this.camera.rotationMatrix = Matrix4.fromEuler(ax, ay, az);
-			this.camera.rayVectors = this.camera.computeRayVectors();
+			this.camera.computeRayVectors();
 		}
+	}
+
+	// Async parallel CPU trace using ParallelTracer worker pool.
+	// Broadcasts scene data to workers then dispatches row chunks.
+	// Returns a Promise that resolves when the full image is written into this.image.p.
+	traceAllParallel() {
+		this.prepareFrameData();
+
+		// Build 3×3 rotation (same layout as webgl-renderer _rot3)
+		const rot9 = this._rot9Buf;
+		const m    = this.camera.rotationMatrix && this.camera.rotationMatrix.m;
+		if (m) {
+			rot9[0]=m[0]; rot9[1]=m[1]; rot9[2]=m[2];
+			rot9[3]=m[4]; rot9[4]=m[5]; rot9[5]=m[6];
+			rot9[6]=m[8]; rot9[7]=m[9]; rot9[8]=m[10];
+		} else {
+			rot9[0]=1; rot9[1]=0; rot9[2]=0;
+			rot9[3]=0; rot9[4]=1; rot9[5]=0;
+			rot9[6]=0; rot9[7]=0; rot9[8]=1;
+		}
+
+		// Broadcast compact SOA buffers to all workers (scene data, processed once)
+		this._parallelTracer.broadcast({
+			cmd:        'update',
+			triSoa:     this._gpuTriBuf.slice(0, this._triCount * 20),
+			lightSoa:   this._gpuLightBuf.slice(0, this.lightSources.length * 8),
+			triCount:   this._triCount,
+			lightCount: this.lightSources.length,
+			cam: {
+				pixelSize:   this.camera.pixelSize,
+				focalLength: this.camera.focalLength,
+				definitionH: this.camera.definitionH,
+				definitionV: this.camera.definitionV,
+			},
+			rot9:  rot9.slice(),
+			scene: {
+				ambientStrength: this.scene ? this.scene.ambientStrength : Config.scene.ambientStrength,
+				shininess:       this.scene ? this.scene.shininess       : Config.scene.shininess,
+			},
+		});
+
+		const rows   = this.image.rows;
+		const cols   = this.image.cols;
+		const imageP = this.image.p;
+
+		return this._parallelTracer.trace(rows, (startRow, endRow, pixels) => {
+			let off = 0;
+			for (let r = startRow; r < endRow; r++) {
+				const rowArr = imageP[r];
+				for (let c = 0; c < cols; c++) {
+					rowArr[c] = { r: pixels[off], g: pixels[off+1], b: pixels[off+2] };
+					off += 3;
+				}
+			}
+		});
 	}
     
 	traceAll() {
@@ -153,16 +221,12 @@ class Engine {
 	// (Incremental tracing removed) Use traceAll() for full synchronous renders.
 
 	traceRay(col, row) {
-		// Numeric, allocation-minimizing Möller–Trumbore implementation
-		const camPos = this.camera.position;
-		const ox = camPos.x, oy = camPos.y, oz = camPos.z;
-		const rv = this.camera.rayVectors[row][col];
-		if (!rv) return this._black;
-		let dx = rv.x, dy = rv.y, dz = rv.z;
-		let len2 = dx*dx + dy*dy + dz*dz;
-		if (len2 === 0) return this._black;
-		const invLen = 1.0 / Math.sqrt(len2);
-		dx *= invLen; dy *= invLen; dz *= invLen;
+		// Read pre-normalised direction from flat Float32Array buffer
+		const base = (row * this.camera.definitionH + col) * 3;
+		const buf  = this.camera.rayVectors;
+		if (!buf) return this._black;
+		const dx = buf[base], dy = buf[base+1], dz = buf[base+2];
+		if (dx === 0 && dy === 0 && dz === 0) return this._black;
 
 		const EPSILON = 1e-6;
 		let closestT = Infinity;
@@ -221,8 +285,8 @@ class Engine {
 	computeIllumination(triIndex, P) {
 		// Numeric implementation using structure-of-arrays
 		const nx = this._tri_nx[triIndex], ny = this._tri_ny[triIndex], nz = this._tri_nz[triIndex];
-		const ambientStrength = this.scene ? this.scene.ambientStrength : 0.2;
-		const shininess = this.scene ? this.scene.shininess : 32;
+		const ambientStrength = this.scene ? this.scene.ambientStrength : Config.scene.ambientStrength;
+		const shininess = this.scene ? this.scene.shininess : Config.scene.shininess;
 
 		let r = this._tri_cr[triIndex] * ambientStrength;
 		let g = this._tri_cg[triIndex] * ambientStrength;
@@ -298,38 +362,47 @@ class Engine {
 		tri.v2 = tri.baseV2.plus(new Vector(dx, dy, dz));
 	}
 
-	// Start an animation loop that updates triangle 0 position and redraws the image.
-	// `canvas` is the HTMLCanvasElement to draw into. Returns the animation id.
+	// Start an animation loop that updates cube positions and redraws the image.
+	// Uses the parallel CPU tracer when available, falling back to single-threaded.
 	startAnimation(canvas) {
-		if (this._animId) return; // already running
-		this._canvas = canvas;
+		if (this._animId) return;
+		this._canvas    = canvas;
 		this._startTime = performance.now();
 		this._lastFrameTime = this._startTime;
-		const frameInterval = 1000 / 60; // max 60 Hz
-		const animate = (t) => {
-			const elapsed = t - this._startTime;
-			const speed = 0.001; // radians per ms
-			const angle = elapsed * speed;
-			if (this.cubes.length > 0) {
-				this.cubes[0].rotate(0.3 * Math.sin(angle), angle, 0.2 * Math.cos(angle));
-			}
-			if (this.cubes.length > 1) {
-				this.cubes[1].rotate(0.8 * Math.cos(2*angle), angle, -0.1 * Math.sin(-angle));
-			}
+		const frameInterval = 1000 / Config.animation.maxFps;
 
-			// Cap rendering/tracing to 60Hz
+		const step = (t) => {
 			const delta = t - this._lastFrameTime;
-			if (delta >= frameInterval) {
-				this.traceAll();
-				if (this._canvas && this.image) this.image.drawToCanvas(this._canvas, this.canvasScale);
-				this._lastFrameTime = t;
+			if (delta < frameInterval) {
+				this._animId = requestAnimationFrame(step);
+				return;
+			}
+			this._lastFrameTime = t;
+
+			const angle = (t - this._startTime) * Config.animation.speed;
+			if (this.cubes.length > 0)
+				this.cubes[0].rotate(0.3 * Math.sin(angle), angle, 0.2 * Math.cos(angle));
+			if (this.cubes.length > 1)
+				this.cubes[1].rotate(0.8 * Math.cos(2*angle), angle, -0.1 * Math.sin(-angle));
+
+			const finish = () => {
+				if (this._canvas && this.image)
+					this.image.drawToCanvas(this._canvas, this.canvasScale);
 				const fpsEl = document.getElementById('fps');
 				if (fpsEl) fpsEl.textContent = (1000.0 / delta).toFixed(1);
-			}
+				if (this._animId !== null)
+					this._animId = requestAnimationFrame(step);
+			};
 
-			this._animId = requestAnimationFrame(animate);
+			if (this._parallelTracer) {
+				this.traceAllParallel().then(finish);
+			} else {
+				this.traceAll();
+				finish();
+			}
 		};
-		this._animId = requestAnimationFrame(animate);
+
+		this._animId = requestAnimationFrame(step);
 		return this._animId;
 	}
 

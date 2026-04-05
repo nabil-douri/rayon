@@ -1,6 +1,6 @@
 class Scene {
-    ambientStrength = 0.25;
-    shininess = 256;
+    ambientStrength = Config.scene.ambientStrength;
+    shininess = Config.scene.shininess;
 	lightSources = [];
 	triangles = [];
 	cubes = [];
@@ -10,18 +10,19 @@ class Scene {
     }
 
     createDefault() {
-        // single bright white light
-        this.lightSources.push(new LightSource(new Point(1000, 1000, 100), 1000000, new Color(1,1,1)));
-        this.lightSources.push(new LightSource(new Point(-100, 100, -500), 1000000, new Color(1,1,1)));
-
-        // one cube at Z=500
-        const cube = new Cube(new Point(30,20,300), 40, new Color(0.2,0.6,0.9));
-        this.cubes.push(cube);
-        for (let t of cube.triangles) this.triangles.push(t);
-
-        const cube2 = new Cube(new Point(-30,0,200), 40, new Color(0.9,0.2,0.6));
-        this.cubes.push(cube2);
-        for (let t of cube2.triangles) this.triangles.push(t);
+        for (const l of Config.lights) {
+            this.lightSources.push(new LightSource(
+                new Point(l.x, l.y, l.z), l.power, new Color(l.r, l.g, l.b)
+            ));
+        }
+        for (const c of Config.cubes) {
+            const cube = new Cube(
+                new Point(c.x, c.y, c.z), c.size, new Color(c.r, c.g, c.b),
+                Config.material.defaultDiffuse, Config.material.defaultSpecular
+            );
+            this.cubes.push(cube);
+            for (const t of cube.triangles) this.triangles.push(t);
+        }
     }
 
     // convenience setters

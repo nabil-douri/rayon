@@ -10,9 +10,12 @@
 		<script type="text/javascript" src="lightsource.js"></script>
 		<script type="text/javascript" src="image.js"></script>
 		<script type="text/javascript" src="cube.js"></script>
+		<script type="text/javascript" src="config.js"></script>
 		<script type="text/javascript" src="scene.js"></script>
 		<script type="text/javascript" src="webgl-renderer.js"></script>
+		<script type="text/javascript" src="parallel.js"></script>
 		<script type="text/javascript" src="engine.js"></script>
+		<script type="text/javascript" src="stl-loader.js"></script>
 	</head>
 	<body>
 		<div class="app">
@@ -26,170 +29,41 @@
 			<div id="controls" class="controls">
 			<p>
 				<label>Diffuse: <span id="diffVal">0.5</span></label>
-				<input id="diffRange" type="range" min="0" max="1" step="0.01" value="0.5">
+				<input id="diffRange" type="range">
 			</p>
 			<p>
 				<label>Specular: <span id="specVal">0</span></label>
-				<input id="specRange" type="range" min="0" max="1" step="0.01" value="0">
+				<input id="specRange" type="range">
 			</p>
 			<p>
 				<label>Shininess: <span id="shinVal">32</span></label>
-				<input id="shinRange" type="range" min="1" max="256" step="1" value="32">
+				<input id="shinRange" type="range">
 			</p>
 			<p>
 				<label>Ambient: <span id="ambVal">0.2</span></label>
-				<input id="ambRange" type="range" min="0" max="1" step="0.01" value="0.2">
+				<input id="ambRange" type="range">
 			</p>
 			</div>
 			<div class="fps-box">FPS: <span id="fps">--</span></div>
 
 			<div style="margin-top:18px">
-			<button onclick="renderFrame();">Trace All</button>
-			<button onclick="startAnim();">Start Animation</button>
-			<button onclick="stopAnim();">Stop Animation</button>
-			<button id="switch-btn" onclick="switchMode();">Switch to GPU (WebGL2)</button>
+			<button id="btn-trace">Trace All</button>
+			<button id="btn-start-anim">Start Animation</button>
+			<button id="btn-stop-anim">Stop Animation</button>
+			<button id="switch-btn">Switch to GPU (WebGL2)</button>
 			</div>
 
-			<script>
-				console.log("Starting application...");
-				let engine = new Engine();
-				const canvasCpu = document.getElementById('canvas');
-				const canvasGpu = document.getElementById('canvas-gpu');
+			<div style="margin-top:18px; display:flex; align-items:center; gap:12px; flex-wrap:wrap">
+				<strong>Load STL:</strong>
+				<input type="file" id="stl-file" accept=".stl">
+				<label>Color <input type="color" id="stl-color" value="#cc8833"></label>
+				<label>Scale <input type="number" id="stl-scale" value="1" min="0.0001" step="0.1" style="width:70px"></label>
+				<button id="btn-load-stl">Load</button>
+				<span id="stl-status" style="color:#888"></span>
+			</div>
 
-				// ---- Renderer mode state ----
-				let gpuMode       = false;
-				let webglRenderer = null;
-
-				/** Render a single frame in whichever mode is active. */
-				function renderFrame() {
-					if (gpuMode && webglRenderer) {
-						webglRenderer.render(engine);
-					} else {
-						engine.traceAll();
-						engine.image.drawToCanvas(canvasCpu, engine.canvasScale);
-					}
-				}
-
-				/** Toggle between CPU and GPU rendering mode. */
-				function switchMode() {
-					// Stop any running animation before switching
-					engine.stopAnimation();
-					if (webglRenderer) webglRenderer.stopAnimation();
-
-					if (!gpuMode) {
-						// Initialize WebGL2 renderer once
-						if (!webglRenderer) {
-							webglRenderer = new WebGLRenderer();
-							if (!webglRenderer.init(canvasGpu)) {
-								alert('WebGL2 is not supported in this browser. Staying in CPU mode.');
-								webglRenderer = null;
-								return;
-							}
-						}
-						gpuMode = true;
-						canvasCpu.style.display = 'none';
-						canvasGpu.style.display = '';
-						document.getElementById('mode-label').textContent = 'GPU (WebGL2) Ray Tracer';
-						document.getElementById('switch-btn').textContent  = 'Switch to CPU';
-					} else {
-						gpuMode = false;
-						canvasGpu.style.display = 'none';
-						canvasCpu.style.display = '';
-						document.getElementById('mode-label').textContent = 'CPU Ray Tracer in JavaScript';
-						document.getElementById('switch-btn').textContent  = 'Switch to GPU (WebGL2)';
-					}
-					renderFrame();
-				}
-
-				// Initial CPU render
-				renderFrame();
-		
-				// Camera rotation state for middle-button dragging
-				let isMiddleDown = false;
-				let lastX = 0, lastY = 0;
-				let camAx = 0, camAy = 0, camAz = 0;
-
-				// Register mousedown on the container so both canvases receive it
-				document.getElementById('canvas-container').addEventListener('mousedown', (e) => {
-					if (e.button === 1) {
-						isMiddleDown = true; lastX = e.clientX; lastY = e.clientY;
-						e.preventDefault();
-					}
-				});
-				window.addEventListener('mouseup', (e) => {
-					if (isMiddleDown && e.button === 1) {
-						isMiddleDown = false;
-					}
-				});
-				window.addEventListener('mousemove', (e) => {
-					if (!isMiddleDown) return;
-					const dx = e.clientX - lastX;
-					const dy = e.clientY - lastY;
-					lastX = e.clientX; lastY = e.clientY;
-					const sensitivity = 0.005; // radians per pixel
-					camAy += dx * sensitivity; // yaw
-					camAx += dy * sensitivity; // pitch
-					engine.setCameraRotation(camAx, camAy, camAz);
-					renderFrame();
-				});
-
-				function startAnim() {
-					if (gpuMode && webglRenderer) {
-						webglRenderer.startAnimation(engine);
-					} else {
-						engine.startAnimation(canvasCpu);
-					}
-				}
-				function stopAnim() {
-					engine.stopAnimation();
-					if (webglRenderer) webglRenderer.stopAnimation();
-				}
-
-				// Wire up control sliders to engine parameters
-				const diffRange = document.getElementById('diffRange');
-				const specRange = document.getElementById('specRange');
-				const shinRange = document.getElementById('shinRange');
-				const ambRange = document.getElementById('ambRange');
-				const diffVal = document.getElementById('diffVal');
-				const specVal = document.getElementById('specVal');
-				const shinVal = document.getElementById('shinVal');
-				const ambVal = document.getElementById('ambVal');
-
-				// Initialize UI from engine values
-				diffRange.value = engine.triangles.length ? engine.triangles[0].diffuseReflectance : 0.5;
-				diffVal.textContent = diffRange.value;
-				specRange.value = engine.triangles.length ? engine.triangles[0].specularReflectance : 0;
-				specVal.textContent = specRange.value;
-				shinRange.value = engine.scene.shininess;
-				shinVal.textContent = shinRange.value;
-				ambRange.value = engine.scene.ambientStrength;
-				ambVal.textContent = ambRange.value;
-
-				diffRange.oninput = () => {
-					const v = parseFloat(diffRange.value);
-					diffVal.textContent = v.toFixed(2);
-					engine.setSceneDiffuse(v);
-					renderFrame();
-				};
-				specRange.oninput = () => {
-					const v = parseFloat(specRange.value);
-					specVal.textContent = v.toFixed(2);
-					engine.setSceneSpecular(v);
-					renderFrame();
-				};
-				shinRange.oninput = () => {
-					const v = parseInt(shinRange.value, 10);
-					shinVal.textContent = v;
-					if (engine.scene) engine.scene.shininess = v;
-					renderFrame();
-				};
-				ambRange.oninput = () => {
-					const v = parseFloat(ambRange.value);
-					ambVal.textContent = v.toFixed(2);
-					if (engine.scene) engine.scene.ambientStrength = v;
-					renderFrame();
-				};
-			</script>
+			<script type="text/javascript" src="ui.js"></script>
+			<script type="text/javascript" src="script.js"></script>
 		</div>
 	</body>
 </html>

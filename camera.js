@@ -4,55 +4,56 @@ class Camera {
 	definitionV;
 	pixelSize;
 	focalLength;
+	// Flat Float32Array of (dx,dy,dz) triples, row-major: index = (row*cols+col)*3
 	rayVectors;
-	
+
 	constructor(position, definitionH, definitionV, pixelSize, focalLength) {
 		this.position = position;
 		this.definitionH = definitionH;
 		this.definitionV = definitionV;
 		this.pixelSize = pixelSize;
 		this.focalLength = focalLength;
-		this.rayVectors = this.computeRayVectors();
+		this._rayBuf = new Float32Array(definitionH * definitionV * 3);
+		this.computeRayVectors();
 	}
 
-	// Compute and return a 2D array [row][col] of ray direction Vectors
-	// from the camera position through each pixel on the focal plane.
+	// Fill _rayBuf in-place with normalized direction vectors.
+	// Returns this.rayVectors (the flat buffer) for compatibility.
 	computeRayVectors() {
-		const cx = this.definitionH / 2.0;
-		const cy = this.definitionV / 2.0;
-		const rays = [];
-		for (let row = 0; row < this.definitionV; row++) {
-			const rowArr = [];
-			for (let col = 0; col < this.definitionH; col++) {
-				const pixelX = (col - cx) * this.pixelSize;
-				const pixelY = -(row - cy) * this.pixelSize;
-				const pixelZ = this.focalLength;
-				const pixelPoint = new Point(pixelX, pixelY, pixelZ);
-				// Subtract camera position to get direction vector
-				let dir = pixelPoint.minus(this.position);
-				// If camera has a rotation matrix, apply the rotation to the direction (no translation)
-				if (this.rotationMatrix && this.rotationMatrix.m) {
-					const m = this.rotationMatrix.m;
-					const x = dir.x, y = dir.y, z = dir.z;
-					// Use linear part (3x3) of row-major matrix
-					dir = new Vector(
-						m[0]*x + m[4]*y + m[8]*z,
-						m[1]*x + m[5]*y + m[9]*z,
-						m[2]*x + m[6]*y + m[10]*z
-					);
+		const buf  = this._rayBuf;
+		const cols = this.definitionH;
+		const rows = this.definitionV;
+		const cx   = cols / 2.0;
+		const cy   = rows / 2.0;
+		const ps   = this.pixelSize;
+		const fz   = this.focalLength;
+		const m    = (this.rotationMatrix && this.rotationMatrix.m) ? this.rotationMatrix.m : null;
+		let ptr = 0;
+		for (let row = 0; row < rows; row++) {
+			for (let col = 0; col < cols; col++) {
+				let dx =  (col - cx) * ps;
+				let dy = -(row - cy) * ps;
+				let dz =  fz;
+				if (m) {
+					const x = dx, y = dy, z = dz;
+					dx = m[0]*x + m[4]*y + m[8]*z;
+					dy = m[1]*x + m[5]*y + m[9]*z;
+					dz = m[2]*x + m[6]*y + m[10]*z;
 				}
-				rowArr.push(dir);
+				const inv = 1.0 / Math.sqrt(dx*dx + dy*dy + dz*dz);
+				buf[ptr++] = dx * inv;
+				buf[ptr++] = dy * inv;
+				buf[ptr++] = dz * inv;
 			}
-			rays.push(rowArr);
 		}
-		return rays;
+		this.rayVectors = buf;
+		return buf;
 	}
 
 	setRotationFromEuler(ax, ay, az) {
 		if (typeof Matrix4 !== 'undefined') {
 			this.rotationMatrix = Matrix4.fromEuler(ax, ay, az);
-			// Recompute ray vectors when rotation changes
-			this.rayVectors = this.computeRayVectors();
+			this.computeRayVectors();
 		}
 	}
 }

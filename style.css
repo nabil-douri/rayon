@@ -37,7 +37,7 @@ canvas#canvas,
 canvas#canvas-gpu {
   background: #000;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  image-rendering: pixelated;
+  image-rendering: smooth;  
 }
 
 .controls {
