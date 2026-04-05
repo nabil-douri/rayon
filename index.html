@@ -11,13 +11,15 @@
 		<script type="text/javascript" src="image.js"></script>
 		<script type="text/javascript" src="cube.js"></script>
 		<script type="text/javascript" src="scene.js"></script>
+		<script type="text/javascript" src="webgl-renderer.js"></script>
 		<script type="text/javascript" src="engine.js"></script>
 	</head>
 	<body>
 		<div class="app">
-			<div style="font-size:24px; font-weight:bold; margin-bottom:18px">Rayon - CPU Ray Tracer in JavaScript</div>
-			<div class="canvas-container">
+			<div style="font-size:24px; font-weight:bold; margin-bottom:18px">Rayon &mdash; <span id="mode-label">CPU Ray Tracer in JavaScript</span></div>
+			<div class="canvas-container" id="canvas-container">
 				<canvas id="canvas"></canvas>
+				<canvas id="canvas-gpu" style="display:none"></canvas>
 			</div>
         
 
@@ -42,26 +44,73 @@
 			<div class="fps-box">FPS: <span id="fps">--</span></div>
 
 			<div style="margin-top:18px">
-			<button onclick="engine.traceAll(); engine.image.drawToCanvas(document.getElementById('canvas'), engine.canvasScale);">Trace All</button>
+			<button onclick="renderFrame();">Trace All</button>
 			<button onclick="startAnim();">Start Animation</button>
 			<button onclick="stopAnim();">Stop Animation</button>
+			<button id="switch-btn" onclick="switchMode();">Switch to GPU (WebGL2)</button>
 			</div>
 
 			<script>
 				console.log("Starting application...");
 				let engine = new Engine();
-				const canvas = document.getElementById('canvas');
-				// Start with a full trace and draw to canvas
-				engine.traceAll();
-				engine.image.drawToCanvas(canvas, engine.canvasScale);
+				const canvasCpu = document.getElementById('canvas');
+				const canvasGpu = document.getElementById('canvas-gpu');
+
+				// ---- Renderer mode state ----
+				let gpuMode       = false;
+				let webglRenderer = null;
+
+				/** Render a single frame in whichever mode is active. */
+				function renderFrame() {
+					if (gpuMode && webglRenderer) {
+						webglRenderer.render(engine);
+					} else {
+						engine.traceAll();
+						engine.image.drawToCanvas(canvasCpu, engine.canvasScale);
+					}
+				}
+
+				/** Toggle between CPU and GPU rendering mode. */
+				function switchMode() {
+					// Stop any running animation before switching
+					engine.stopAnimation();
+					if (webglRenderer) webglRenderer.stopAnimation();
+
+					if (!gpuMode) {
+						// Initialize WebGL2 renderer once
+						if (!webglRenderer) {
+							webglRenderer = new WebGLRenderer();
+							if (!webglRenderer.init(canvasGpu)) {
+								alert('WebGL2 is not supported in this browser. Staying in CPU mode.');
+								webglRenderer = null;
+								return;
+							}
+						}
+						gpuMode = true;
+						canvasCpu.style.display = 'none';
+						canvasGpu.style.display = '';
+						document.getElementById('mode-label').textContent = 'GPU (WebGL2) Ray Tracer';
+						document.getElementById('switch-btn').textContent  = 'Switch to CPU';
+					} else {
+						gpuMode = false;
+						canvasGpu.style.display = 'none';
+						canvasCpu.style.display = '';
+						document.getElementById('mode-label').textContent = 'CPU Ray Tracer in JavaScript';
+						document.getElementById('switch-btn').textContent  = 'Switch to GPU (WebGL2)';
+					}
+					renderFrame();
+				}
+
+				// Initial CPU render
+				renderFrame();
 		
 				// Camera rotation state for middle-button dragging
 				let isMiddleDown = false;
 				let lastX = 0, lastY = 0;
 				let camAx = 0, camAy = 0, camAz = 0;
 
-				// Middle-button press starts rotation
-				canvas.addEventListener('mousedown', (e) => {
+				// Register mousedown on the container so both canvases receive it
+				document.getElementById('canvas-container').addEventListener('mousedown', (e) => {
 					if (e.button === 1) {
 						isMiddleDown = true; lastX = e.clientX; lastY = e.clientY;
 						e.preventDefault();
@@ -81,13 +130,20 @@
 					camAy += dx * sensitivity; // yaw
 					camAx += dy * sensitivity; // pitch
 					engine.setCameraRotation(camAx, camAy, camAz);
-					engine.traceAll();
-					engine.image.drawToCanvas(canvas, engine.canvasScale);
+					renderFrame();
 				});
 
-
-				function startAnim() { engine.startAnimation(canvas); }
-				function stopAnim() { engine.stopAnimation(); }
+				function startAnim() {
+					if (gpuMode && webglRenderer) {
+						webglRenderer.startAnimation(engine);
+					} else {
+						engine.startAnimation(canvasCpu);
+					}
+				}
+				function stopAnim() {
+					engine.stopAnimation();
+					if (webglRenderer) webglRenderer.stopAnimation();
+				}
 
 				// Wire up control sliders to engine parameters
 				const diffRange = document.getElementById('diffRange');
@@ -113,25 +169,25 @@
 					const v = parseFloat(diffRange.value);
 					diffVal.textContent = v.toFixed(2);
 					engine.setSceneDiffuse(v);
-					engine.traceAll(); engine.image.drawToCanvas(canvas, engine.canvasScale);
+					renderFrame();
 				};
 				specRange.oninput = () => {
 					const v = parseFloat(specRange.value);
 					specVal.textContent = v.toFixed(2);
 					engine.setSceneSpecular(v);
-					engine.traceAll(); engine.image.drawToCanvas(canvas, engine.canvasScale);
+					renderFrame();
 				};
 				shinRange.oninput = () => {
 					const v = parseInt(shinRange.value, 10);
 					shinVal.textContent = v;
 					if (engine.scene) engine.scene.shininess = v;
-					engine.traceAll(); engine.image.drawToCanvas(canvas, engine.canvasScale);
+					renderFrame();
 				};
 				ambRange.oninput = () => {
 					const v = parseFloat(ambRange.value);
 					ambVal.textContent = v.toFixed(2);
 					if (engine.scene) engine.scene.ambientStrength = v;
-					engine.traceAll(); engine.image.drawToCanvas(canvas, engine.canvasScale);
+					renderFrame();
 				};
 			</script>
 		</div>
